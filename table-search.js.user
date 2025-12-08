@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartsheet Full Table Search
 // @namespace    https://github.com/RynAgain/Brandon_SmartSheet_Demo
-// @version      1.1.0
+// @version      1.2.0
 // @description  Search entire Smartsheet table including all virtualized rows via API
 // @author       RynAgain
 // @match        https://app.smartsheet.com/*
@@ -15,6 +15,11 @@
 
 (function() {
     'use strict';
+
+    // Version checking variables
+    const CURRENT_VERSION = '1.2.0';
+    const GITHUB_VERSION_URL = 'https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/table-search.js.user';
+    const VERSION_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
     // Whole Foods color palette
     const colors = {
@@ -30,6 +35,7 @@
     let allTableData = [];
     let columnHeaders = [];
     let apiDataLoaded = false;
+    let versionCheckInterval = null;
 
     // Default XSRF token from example (same as main.js.user)
     const DEFAULT_XSRF_TOKEN = 'xeFtzoYPp00A72A6D8JsZ0hIJbE';
@@ -129,6 +135,191 @@
             
             return originalFetch.apply(this, args);
         };
+    }
+
+    // Version comparison function
+    function isNewerVersion(latest, current) {
+        const latestParts = latest.split('.').map(part => parseInt(part, 10));
+        const currentParts = current.split('.').map(part => parseInt(part, 10));
+        
+        const maxLength = Math.max(latestParts.length, currentParts.length);
+        while (latestParts.length < maxLength) latestParts.push(0);
+        while (currentParts.length < maxLength) currentParts.push(0);
+        
+        for (let i = 0; i < maxLength; i++) {
+            if (latestParts[i] > currentParts[i]) return true;
+            if (latestParts[i] < currentParts[i]) return false;
+        }
+        
+        return false;
+    }
+
+    // Show update notification modal
+    function showUpdateNotification(latestVersion) {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100000;
+        `;
+
+        modal.innerHTML = `
+            <div style="
+                background: white;
+                border-radius: 12px;
+                padding: 30px;
+                max-width: 500px;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            ">
+                <h2 style="margin: 0 0 20px 0; color: ${colors.primary}; font-size: 24px;">
+                    🎉 Update Available!
+                </h2>
+                <p style="margin: 0 0 20px 0; color: ${colors.text}; font-size: 16px;">
+                    A new version of Smartsheet Full Table Search is available.
+                </p>
+                <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <div style="margin-bottom: 10px;">
+                        <strong>Current Version:</strong> ${CURRENT_VERSION}
+                    </div>
+                    <div>
+                        <strong>Latest Version:</strong> <span style="color: ${colors.accent};">${latestVersion}</span>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button id="update-now-btn" style="
+                        flex: 1;
+                        padding: 12px;
+                        background: linear-gradient(135deg, ${colors.primary} 0%, ${colors.hover} 100%);
+                        color: white;
+                        border: none;
+                        border-radius: 6px;
+                        font-size: 14px;
+                        font-weight: 600;
+                        cursor: pointer;
+                    ">Update Now</button>
+                    <button id="remind-later-btn" style="
+                        flex: 1;
+                        padding: 12px;
+                        background: #f0f0f0;
+                        color: ${colors.text};
+                        border: none;
+                        border-radius: 6px;
+                        font-size: 14px;
+                        font-weight: 600;
+                        cursor: pointer;
+                    ">Remind Later</button>
+                    <button id="skip-version-btn" style="
+                        flex: 1;
+                        padding: 12px;
+                        background: #f0f0f0;
+                        color: ${colors.text};
+                        border: none;
+                        border-radius: 6px;
+                        font-size: 14px;
+                        font-weight: 600;
+                        cursor: pointer;
+                    ">Skip This Version</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        document.getElementById('update-now-btn').addEventListener('click', () => {
+            window.open(GITHUB_VERSION_URL, '_blank');
+            document.body.removeChild(modal);
+        });
+
+        document.getElementById('remind-later-btn').addEventListener('click', () => {
+            GM_setValue('lastVersionCheck', 0);
+            document.body.removeChild(modal);
+        });
+
+        document.getElementById('skip-version-btn').addEventListener('click', () => {
+            GM_setValue('skippedVersion', latestVersion);
+            document.body.removeChild(modal);
+        });
+    }
+
+    // Check for updates
+    async function checkForUpdates(showNoUpdateMessage = false) {
+        try {
+            const lastCheck = GM_getValue('lastVersionCheck', 0);
+            const now = Date.now();
+
+            if (!showNoUpdateMessage && (now - lastCheck) < VERSION_CHECK_INTERVAL) {
+                return;
+            }
+
+            console.log('Checking for updates...');
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: GITHUB_VERSION_URL,
+                onload: function(response) {
+                    try {
+                        const content = response.responseText;
+                        const versionMatch = content.match(/@version\s+([^\s]+)/);
+
+                        if (!versionMatch) {
+                            throw new Error('Could not extract version from script');
+                        }
+
+                        const latestVersion = versionMatch[1].trim();
+                        GM_setValue('lastVersionCheck', now);
+
+                        const skippedVersion = GM_getValue('skippedVersion', '');
+                        
+                        if (isNewerVersion(latestVersion, CURRENT_VERSION) && latestVersion !== skippedVersion) {
+                            console.log(`Update available: ${latestVersion}`);
+                            showUpdateNotification(latestVersion);
+                        } else if (showNoUpdateMessage) {
+                            alert(`✅ You're running the latest version!\n\nCurrent: ${CURRENT_VERSION}\nLatest: ${latestVersion}`);
+                        }
+                    } catch (error) {
+                        console.error('Error parsing version:', error);
+                        if (showNoUpdateMessage) {
+                            alert(`❌ Failed to check for updates: ${error.message}`);
+                        }
+                    }
+                },
+                onerror: function(error) {
+                    console.error('Update check failed:', error);
+                    if (showNoUpdateMessage) {
+                        alert('❌ Failed to check for updates. Please check your internet connection.');
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Update check error:', error);
+            if (showNoUpdateMessage) {
+                alert(`❌ Failed to check for updates: ${error.message}`);
+            }
+        }
+    }
+
+    // Start automatic version checking
+    function startVersionChecking() {
+        console.log('🔍 Starting automatic version checking...');
+        
+        // Check on startup (after delay)
+        setTimeout(() => {
+            checkForUpdates(false);
+        }, 5000);
+        
+        // Set up periodic checking
+        versionCheckInterval = setInterval(() => {
+            checkForUpdates(false);
+        }, VERSION_CHECK_INTERVAL);
+        
+        console.log('✅ Version checking initialized');
     }
 
     // Fetch ALL rows from Smartsheet API
@@ -278,6 +469,26 @@
                     height: 24px;
                 }
 
+                #wf-check-update-icon {
+                    background: none;
+                    border: none;
+                    color: white;
+                    font-size: 16px;
+                    cursor: pointer;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    transition: background-color 0.2s;
+                }
+
+                #wf-check-update-icon:hover {
+                    background-color: rgba(255, 255, 255, 0.2);
+                }
+
+                #wf-check-update-icon:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+
                 #wf-search-content {
                     padding: 20px;
                     display: flex;
@@ -395,7 +606,10 @@
                     <div id="wf-search-logo">🔍</div>
                     <span>Full Table Search</span>
                 </div>
-                <button id="wf-search-toggle">−</button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button id="wf-check-update-icon" title="Check for updates">🔄</button>
+                    <button id="wf-search-toggle">−</button>
+                </div>
             </div>
 
             <div id="wf-search-content">
@@ -657,11 +871,15 @@
         const ui = createSearchUI();
         makeDraggable(ui);
 
+        // Start version checking
+        startVersionChecking();
+
         // Setup event listeners
         const toggleBtn = document.getElementById('wf-search-toggle');
         const content = document.getElementById('wf-search-content');
         const apiLoadBtn = document.getElementById('wf-api-load-btn');
         const searchBtn = document.getElementById('wf-search-btn');
+        const checkUpdateIcon = document.getElementById('wf-check-update-icon');
         const searchInput = document.getElementById('wf-search-query');
 
         toggleBtn.addEventListener('click', () => {
@@ -715,10 +933,22 @@
             }
         });
 
+        // Check for updates icon button
+        checkUpdateIcon.addEventListener('click', () => {
+            checkUpdateIcon.disabled = true;
+            checkUpdateIcon.textContent = '⏳';
+            checkForUpdates(true);
+            setTimeout(() => {
+                checkUpdateIcon.textContent = '🔄';
+                checkUpdateIcon.disabled = false;
+            }, 2000);
+        });
+
         // Update stats
         updateStats();
 
         console.log('Smartsheet Full Table Search initialized');
+        console.log('Version:', CURRENT_VERSION);
         console.log('Click "Load ALL Rows" to fetch all data via API');
     }
 
