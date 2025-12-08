@@ -1,0 +1,571 @@
+// NOT USED, better method found
+// ==UserScript==
+// @name         Smartsheet Ticket Filter - Whole Foods Theme
+// @namespace    https://github.com/RynAgain/Brandon_SmartSheet_Demo
+// @version      1.0.0
+// @description  Filter Smartsheet tickets with a Whole Foods themed floating UI
+// @author       RynAgain
+// @match        https://app.smartsheet.com/*
+// @updateURL    https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/main.js.user
+// @downloadURL  https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/main.js.user
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @run-at       document-end
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Whole Foods color palette
+    const colors = {
+        primary: '#00754a',      // Whole Foods green
+        secondary: '#86bc25',    // Light green
+        accent: '#f47920',       // Orange
+        background: '#ffffff',
+        text: '#333333',
+        border: '#e0e0e0',
+        hover: '#005a3a'
+    };
+
+    // Default XSRF token from example
+    const DEFAULT_XSRF_TOKEN = 'xeFtzoYPp00A72A6D8JsZ0hIJbE';
+
+    // Extract view ID from URL
+    function getViewId() {
+        const match = window.location.pathname.match(/\/views\/([a-f0-9-]+)/);
+        return match ? match[1] : null;
+    }
+
+    // Get cookies for the request
+    function getCookies() {
+        return document.cookie;
+    }
+
+    // Get XSRF token with fallback to default and persistence
+    function getXsrfToken() {
+        // Check if we have a persisted token
+        const persistedToken = GM_getValue('xsrf_token', null);
+        if (persistedToken) {
+            console.log('Using persisted XSRF token');
+            return persistedToken;
+        }
+        
+        // Try to get from cookie first
+        let match = document.cookie.match(/x-smar-xsrf=([^;]+)/);
+        if (match) {
+            const token = match[1];
+            GM_setValue('xsrf_token', token);
+            console.log('Found and persisted XSRF token from cookie');
+            return token;
+        }
+        
+        // Try alternative cookie name
+        match = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
+        if (match) {
+            const token = decodeURIComponent(match[1]);
+            GM_setValue('xsrf_token', token);
+            console.log('Found and persisted XSRF token from XSRF-TOKEN cookie');
+            return token;
+        }
+        
+        // Try to get from meta tag
+        const metaTag = document.querySelector('meta[name="csrf-token"]');
+        if (metaTag) {
+            const token = metaTag.getAttribute('content');
+            GM_setValue('xsrf_token', token);
+            console.log('Found and persisted XSRF token from meta tag');
+            return token;
+        }
+        
+        // Try to get from localStorage
+        const stored = localStorage.getItem('xsrf-token') || localStorage.getItem('csrf-token');
+        if (stored) {
+            GM_setValue('xsrf_token', stored);
+            console.log('Found and persisted XSRF token from localStorage');
+            return stored;
+        }
+        
+        // Try to extract from window object
+        if (window.XSRF_TOKEN) {
+            GM_setValue('xsrf_token', window.XSRF_TOKEN);
+            console.log('Found and persisted XSRF token from window.XSRF_TOKEN');
+            return window.XSRF_TOKEN;
+        }
+        if (window.csrfToken) {
+            GM_setValue('xsrf_token', window.csrfToken);
+            console.log('Found and persisted XSRF token from window.csrfToken');
+            return window.csrfToken;
+        }
+        
+        console.warn('XSRF token not found, using default from example');
+        console.log('Available cookies:', document.cookie);
+        return DEFAULT_XSRF_TOKEN;
+    }
+
+    // Intercept fetch requests to capture XSRF tokens
+    function interceptNetworkRequests() {
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const [url, options] = args;
+            
+            // Check if this is a Smartsheet API request
+            if (url && url.includes('smartsheet.com')) {
+                // Extract XSRF token from headers if present
+                if (options && options.headers) {
+                    const headers = options.headers;
+                    let xsrfToken = null;
+                    
+                    if (headers['x-smar-xsrf']) {
+                        xsrfToken = headers['x-smar-xsrf'];
+                    } else if (headers['X-SMAR-XSRF']) {
+                        xsrfToken = headers['X-SMAR-XSRF'];
+                    }
+                    
+                    if (xsrfToken) {
+                        console.log('Captured XSRF token from network request:', xsrfToken);
+                        GM_setValue('xsrf_token', xsrfToken);
+                    }
+                }
+            }
+            
+            return originalFetch.apply(this, args);
+        };
+    }
+
+    // Column ID mapping (will need to be discovered/configured)
+    const columnMapping = {
+        'ticket': '7574808876502916', // Default from example
+        // Add more mappings as discovered
+    };
+
+    // Create floating UI
+    function createUI() {
+        const container = document.createElement('div');
+        container.id = 'wf-ticket-filter';
+        container.innerHTML = `
+            <style>
+                #wf-ticket-filter {
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    width: 320px;
+                    background: ${colors.background};
+                    border: 2px solid ${colors.primary};
+                    border-radius: 12px;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    z-index: 10000;
+                    overflow: hidden;
+                }
+
+                #wf-filter-header {
+                    background: linear-gradient(135deg, ${colors.primary} 0%, ${colors.hover} 100%);
+                    color: white;
+                    padding: 16px;
+                    cursor: move;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    user-select: none;
+                }
+
+                #wf-filter-title {
+                    font-size: 16px;
+                    font-weight: 600;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                #wf-filter-logo {
+                    width: 24px;
+                    height: 24px;
+                    background: white;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-weight: bold;
+                    color: ${colors.primary};
+                    font-size: 14px;
+                }
+
+                #wf-toggle-btn {
+                    background: none;
+                    border: none;
+                    color: white;
+                    font-size: 20px;
+                    cursor: pointer;
+                    padding: 0;
+                    width: 24px;
+                    height: 24px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+
+                #wf-toggle-btn:hover {
+                    opacity: 0.8;
+                }
+
+                #wf-filter-content {
+                    padding: 20px;
+                    display: block;
+                }
+
+                #wf-filter-content.collapsed {
+                    display: none;
+                }
+
+                .wf-input-group {
+                    margin-bottom: 16px;
+                }
+
+                .wf-label {
+                    display: block;
+                    margin-bottom: 8px;
+                    color: ${colors.text};
+                    font-size: 14px;
+                    font-weight: 500;
+                }
+
+                .wf-input {
+                    width: 100%;
+                    padding: 10px 12px;
+                    border: 2px solid ${colors.border};
+                    border-radius: 6px;
+                    font-size: 14px;
+                    box-sizing: border-box;
+                    transition: border-color 0.2s;
+                }
+
+                .wf-input:focus {
+                    outline: none;
+                    border-color: ${colors.primary};
+                }
+
+                .wf-button {
+                    width: 100%;
+                    padding: 12px;
+                    background: linear-gradient(135deg, ${colors.primary} 0%, ${colors.hover} 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: transform 0.1s, box-shadow 0.2s;
+                }
+
+                .wf-button:hover {
+                    transform: translateY(-1px);
+                    box-shadow: 0 4px 8px rgba(0, 117, 74, 0.3);
+                }
+
+                .wf-button:active {
+                    transform: translateY(0);
+                }
+
+                .wf-button:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                    transform: none;
+                }
+
+                #wf-status {
+                    margin-top: 12px;
+                    padding: 10px;
+                    border-radius: 6px;
+                    font-size: 13px;
+                    text-align: center;
+                    display: none;
+                }
+
+                #wf-status.success {
+                    background: #d4edda;
+                    color: #155724;
+                    border: 1px solid #c3e6cb;
+                    display: block;
+                }
+
+                #wf-status.error {
+                    background: #f8d7da;
+                    color: #721c24;
+                    border: 1px solid #f5c6cb;
+                    display: block;
+                }
+
+                #wf-status.info {
+                    background: #d1ecf1;
+                    color: #0c5460;
+                    border: 1px solid #bee5eb;
+                    display: block;
+                }
+
+                .wf-info-text {
+                    font-size: 12px;
+                    color: #666;
+                    margin-top: 8px;
+                    line-height: 1.4;
+                }
+
+                .wf-view-id {
+                    font-family: monospace;
+                    background: #f5f5f5;
+                    padding: 2px 6px;
+                    border-radius: 3px;
+                    font-size: 11px;
+                }
+            </style>
+
+            <div id="wf-filter-header">
+                <div id="wf-filter-title">
+                    <div id="wf-filter-logo">WF</div>
+                    <span>Ticket Filter</span>
+                </div>
+                <button id="wf-toggle-btn">−</button>
+            </div>
+
+            <div id="wf-filter-content">
+                <div class="wf-input-group">
+                    <label class="wf-label" for="wf-ticket-input">Ticket ID</label>
+                    <input 
+                        type="text" 
+                        id="wf-ticket-input" 
+                        class="wf-input" 
+                        placeholder="Enter ticket ID (e.g., GCSP005470)"
+                    />
+                </div>
+
+                <button id="wf-search-btn" class="wf-button">
+                    🔍 Search Ticket
+                </button>
+
+                <div id="wf-status"></div>
+
+                <div class="wf-input-group" style="margin-top: 16px;">
+                    <label class="wf-label" for="wf-xsrf-input">XSRF Token (Optional - Auto-detected)</label>
+                    <input 
+                        type="text" 
+                        id="wf-xsrf-input" 
+                        class="wf-input" 
+                        placeholder="Leave empty for auto-detection"
+                        style="font-size: 11px;"
+                    />
+                </div>
+
+                <div class="wf-info-text" id="wf-view-info">
+                    View ID: <span class="wf-view-id" id="wf-current-view">Not detected</span>
+                </div>
+                
+                <button id="wf-debug-btn" style="margin-top: 8px; padding: 6px; font-size: 11px; background: #666;" class="wf-button">
+                    🔍 Show Debug Info
+                </button>
+            </div>
+        `;
+
+        document.body.appendChild(container);
+        return container;
+    }
+
+    // Make UI draggable
+    function makeDraggable(element) {
+        const header = element.querySelector('#wf-filter-header');
+        let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+
+        header.onmousedown = dragMouseDown;
+
+        function dragMouseDown(e) {
+            e.preventDefault();
+            pos3 = e.clientX;
+            pos4 = e.clientY;
+            document.onmouseup = closeDragElement;
+            document.onmousemove = elementDrag;
+        }
+
+        function elementDrag(e) {
+            e.preventDefault();
+            pos1 = pos3 - e.clientX;
+            pos2 = pos4 - e.clientY;
+            pos3 = e.clientX;
+            pos4 = e.clientY;
+            element.style.top = (element.offsetTop - pos2) + "px";
+            element.style.left = (element.offsetLeft - pos1) + "px";
+            element.style.right = "auto";
+        }
+
+        function closeDragElement() {
+            document.onmouseup = null;
+            document.onmousemove = null;
+        }
+    }
+
+    // Show status message
+    function showStatus(message, type = 'info') {
+        const statusEl = document.getElementById('wf-status');
+        statusEl.textContent = message;
+        statusEl.className = type;
+        
+        if (type === 'success' || type === 'error') {
+            setTimeout(() => {
+                statusEl.style.display = 'none';
+            }, 5000);
+        }
+    }
+
+    // Perform ticket search
+    async function searchTicket(ticketId) {
+        const viewId = getViewId();
+        
+        if (!viewId) {
+            showStatus('Error: Could not detect view ID from URL', 'error');
+            return;
+        }
+
+        // Try manual input first, then auto-detect
+        const manualToken = document.getElementById('wf-xsrf-input').value.trim();
+        const xsrfToken = manualToken || getXsrfToken();
+        
+        if (!xsrfToken) {
+            showStatus('Error: Could not get XSRF token. Check console or enter manually.', 'error');
+            console.error('XSRF token detection failed. Available cookies:', document.cookie);
+            return;
+        }
+
+        showStatus('Searching for ticket...', 'info');
+
+        const requestBody = {
+            name: "Unnamed filter",
+            conditions: [{
+                columnId: columnMapping.ticket,
+                columnType: "TEXT_NUMBER",
+                operator: "CONTAINS",
+                value: ticketId
+            }],
+            shared: false
+        };
+
+        try {
+            const response = await fetch(`https://app.smartsheet.com/dynamicview/api/views/${viewId}/filters`, {
+                method: 'POST',
+                headers: {
+                    'accept': 'application/json, text/plain, */*',
+                    'accept-language': 'en-US,en;q=0.9',
+                    'cache-control': 'no-cache',
+                    'content-type': 'application/json',
+                    'x-smar-xsrf': xsrfToken
+                },
+                credentials: 'include',
+                body: JSON.stringify(requestBody)
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                showStatus(`Filter applied successfully for ${ticketId}`, 'success');
+                console.log('Filter response:', data);
+                
+                // Reload the page to show filtered results
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1500);
+            } else {
+                const errorText = await response.text();
+                showStatus(`Error: ${response.status} - ${response.statusText}`, 'error');
+                console.error('Filter error:', errorText);
+            }
+        } catch (error) {
+            showStatus(`Error: ${error.message}`, 'error');
+            console.error('Search error:', error);
+        }
+    }
+
+    // Initialize the script
+    function init() {
+        // Wait for page to be fully loaded
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+            return;
+        }
+
+        // Only run on dynamicview pages
+        if (!window.location.pathname.includes('/dynamicview/')) {
+            console.log('Smartsheet Ticket Filter: Not on a dynamic view page');
+            return;
+        }
+
+        // Intercept network requests to capture tokens
+        interceptNetworkRequests();
+
+        // Create UI
+        const ui = createUI();
+        makeDraggable(ui);
+
+        // Update view ID display
+        const viewId = getViewId();
+        const viewIdEl = document.getElementById('wf-current-view');
+        if (viewId) {
+            viewIdEl.textContent = viewId;
+        }
+
+        // Setup event listeners
+        const toggleBtn = document.getElementById('wf-toggle-btn');
+        const content = document.getElementById('wf-filter-content');
+        const searchBtn = document.getElementById('wf-search-btn');
+        const ticketInput = document.getElementById('wf-ticket-input');
+
+        toggleBtn.addEventListener('click', () => {
+            content.classList.toggle('collapsed');
+            toggleBtn.textContent = content.classList.contains('collapsed') ? '+' : '−';
+        });
+
+        searchBtn.addEventListener('click', () => {
+            const ticketId = ticketInput.value.trim();
+            if (!ticketId) {
+                showStatus('Please enter a ticket ID', 'error');
+                return;
+            }
+            searchBtn.disabled = true;
+            searchTicket(ticketId).finally(() => {
+                searchBtn.disabled = false;
+            });
+        });
+
+        // Allow Enter key to trigger search
+        ticketInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                searchBtn.click();
+            }
+        });
+
+        // Debug button
+        const debugBtn = document.getElementById('wf-debug-btn');
+        debugBtn.addEventListener('click', () => {
+            const debugInfo = {
+                viewId: getViewId(),
+                xsrfToken: getXsrfToken(),
+                persistedToken: GM_getValue('xsrf_token', null),
+                defaultToken: DEFAULT_XSRF_TOKEN,
+                cookies: document.cookie,
+                localStorage: Object.keys(localStorage).reduce((acc, key) => {
+                    acc[key] = localStorage.getItem(key);
+                    return acc;
+                }, {}),
+                windowVars: {
+                    hasXSRF_TOKEN: !!window.XSRF_TOKEN,
+                    hascsrfToken: !!window.csrfToken
+                }
+            };
+            console.log('=== SMARTSHEET DEBUG INFO ===');
+            console.log(JSON.stringify(debugInfo, null, 2));
+            console.log('============================');
+            showStatus('Debug info logged to console (F12)', 'info');
+        });
+
+        console.log('Smartsheet Ticket Filter initialized');
+        console.log('Detected XSRF token:', getXsrfToken() ? 'Found' : 'Not found');
+    }
+
+    // Start the script
+    init();
+})();

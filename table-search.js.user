@@ -1,0 +1,726 @@
+// ==UserScript==
+// @name         Smartsheet Full Table Search
+// @namespace    https://github.com/RynAgain/Brandon_SmartSheet_Demo
+// @version      1.1.0
+// @description  Search entire Smartsheet table including all virtualized rows via API
+// @author       RynAgain
+// @match        https://app.smartsheet.com/*
+// @updateURL    https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/table-search.js.user
+// @downloadURL  https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/table-search.js.user
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @run-at       document-end
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Whole Foods color palette
+    const colors = {
+        primary: '#00754a',
+        secondary: '#86bc25',
+        accent: '#f47920',
+        background: '#ffffff',
+        text: '#333333',
+        border: '#e0e0e0',
+        hover: '#005a3a'
+    };
+
+    let allTableData = [];
+    let columnHeaders = [];
+    let apiDataLoaded = false;
+
+    // Default XSRF token from example (same as main.js.user)
+    const DEFAULT_XSRF_TOKEN = 'xeFtzoYPp00A72A6D8JsZ0hIJbE';
+
+    // Extract view ID from URL
+    function getViewId() {
+        const match = window.location.pathname.match(/\/views\/([a-f0-9-]+)/);
+        return match ? match[1] : null;
+    }
+
+    // Get XSRF token with fallback to default and persistence (same logic as main.js.user)
+    function getXsrfToken() {
+        // Check if we have a persisted token
+        const persistedToken = GM_getValue('xsrf_token', null);
+        if (persistedToken) {
+            console.log('Using persisted XSRF token');
+            return persistedToken;
+        }
+        
+        // Try to get from cookie first
+        let match = document.cookie.match(/x-smar-xsrf=([^;]+)/);
+        if (match) {
+            const token = match[1];
+            GM_setValue('xsrf_token', token);
+            console.log('Found and persisted XSRF token from cookie');
+            return token;
+        }
+        
+        // Try alternative cookie name
+        match = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
+        if (match) {
+            const token = decodeURIComponent(match[1]);
+            GM_setValue('xsrf_token', token);
+            console.log('Found and persisted XSRF token from XSRF-TOKEN cookie');
+            return token;
+        }
+        
+        // Try to get from meta tag
+        const metaTag = document.querySelector('meta[name="csrf-token"]');
+        if (metaTag) {
+            const token = metaTag.getAttribute('content');
+            GM_setValue('xsrf_token', token);
+            console.log('Found and persisted XSRF token from meta tag');
+            return token;
+        }
+        
+        // Try to get from localStorage
+        const stored = localStorage.getItem('xsrf-token') || localStorage.getItem('csrf-token');
+        if (stored) {
+            GM_setValue('xsrf_token', stored);
+            console.log('Found and persisted XSRF token from localStorage');
+            return stored;
+        }
+        
+        // Try to extract from window object
+        if (window.XSRF_TOKEN) {
+            GM_setValue('xsrf_token', window.XSRF_TOKEN);
+            console.log('Found and persisted XSRF token from window.XSRF_TOKEN');
+            return window.XSRF_TOKEN;
+        }
+        if (window.csrfToken) {
+            GM_setValue('xsrf_token', window.csrfToken);
+            console.log('Found and persisted XSRF token from window.csrfToken');
+            return window.csrfToken;
+        }
+        
+        console.warn('XSRF token not found, using default from example');
+        console.log('Available cookies:', document.cookie);
+        return DEFAULT_XSRF_TOKEN;
+    }
+
+    // Intercept fetch requests to capture XSRF tokens (same as main.js.user)
+    function interceptNetworkRequests() {
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const [url, options] = args;
+            
+            // Check if this is a Smartsheet API request
+            if (url && url.includes('smartsheet.com')) {
+                // Extract XSRF token from headers if present
+                if (options && options.headers) {
+                    const headers = options.headers;
+                    let xsrfToken = null;
+                    
+                    if (headers['x-smar-xsrf']) {
+                        xsrfToken = headers['x-smar-xsrf'];
+                    } else if (headers['X-SMAR-XSRF']) {
+                        xsrfToken = headers['X-SMAR-XSRF'];
+                    }
+                    
+                    if (xsrfToken) {
+                        console.log('Captured XSRF token from network request:', xsrfToken);
+                        GM_setValue('xsrf_token', xsrfToken);
+                    }
+                }
+            }
+            
+            return originalFetch.apply(this, args);
+        };
+    }
+
+    // Fetch ALL rows from Smartsheet API
+    async function fetchAllRowsFromAPI() {
+        const viewId = getViewId();
+        if (!viewId) {
+            console.error('No view ID found in URL');
+            return false;
+        }
+
+        const xsrfToken = getXsrfToken();
+        if (!xsrfToken) {
+            console.error('No XSRF token found in cookies');
+            return false;
+        }
+
+        try {
+            console.log('Fetching ALL rows from API for view:', viewId);
+            
+            // Fetch rows with a high count to get everything
+            const response = await fetch(`https://app.smartsheet.com/dynamicview/api/views/${viewId}/rows?rowCount=10000`, {
+                method: 'GET',
+                headers: {
+                    'accept': 'application/json, text/plain, */*',
+                    'cache-control': 'no-cache',
+                    'x-smar-xsrf': xsrfToken
+                },
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                console.error('API request failed:', response.status, response.statusText);
+                const errorText = await response.text();
+                console.error('Error response:', errorText);
+                return false;
+            }
+
+            const data = await response.json();
+            console.log('API response received:', {
+                hasRows: !!data.rows,
+                rowCount: data.rows?.length,
+                hasColumns: !!data.columns,
+                columnCount: data.columns?.length
+            });
+
+            // Extract column headers
+            if (data.columns && data.columns.length > 0) {
+                columnHeaders = data.columns.map((col, idx) => ({
+                    title: col.title || col.name || `Column ${idx}`,
+                    id: col.id,
+                    index: idx
+                }));
+                console.log('Loaded columns from API:', columnHeaders.length);
+            }
+
+            // Extract rows
+            if (data.rows && data.rows.length > 0) {
+                allTableData = data.rows.map((row, rowIdx) => {
+                    const cells = row.cells || [];
+                    return {
+                        id: row.id || `row-${rowIdx}`,
+                        rowIndex: rowIdx,
+                        cells: cells.map((cell, cellIdx) => ({
+                            value: cell.value || cell.displayValue || '',
+                            displayValue: cell.displayValue || cell.value || '',
+                            columnIndex: cellIdx,
+                            columnName: columnHeaders[cellIdx]?.title || `Column ${cellIdx}`
+                        }))
+                    };
+                });
+                console.log('✅ Successfully loaded ALL rows from API:', allTableData.length);
+                apiDataLoaded = true;
+                return true;
+            }
+
+            console.warn('No rows found in API response');
+            return false;
+        } catch (error) {
+            console.error('Error fetching data from API:', error);
+            return false;
+        }
+    }
+
+    // Create search UI
+    function createSearchUI() {
+        const container = document.createElement('div');
+        container.id = 'wf-table-search';
+        container.innerHTML = `
+            <style>
+                #wf-table-search {
+                    position: fixed;
+                    top: 80px;
+                    right: 20px;
+                    width: 400px;
+                    background: ${colors.background};
+                    border: 2px solid ${colors.primary};
+                    border-radius: 12px;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    z-index: 10000;
+                    overflow: hidden;
+                    max-height: 80vh;
+                    display: flex;
+                    flex-direction: column;
+                }
+
+                #wf-search-header {
+                    background: linear-gradient(135deg, ${colors.primary} 0%, ${colors.hover} 100%);
+                    color: white;
+                    padding: 16px;
+                    cursor: move;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    user-select: none;
+                }
+
+                #wf-search-title {
+                    font-size: 16px;
+                    font-weight: 600;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                #wf-search-logo {
+                    width: 24px;
+                    height: 24px;
+                    background: white;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-weight: bold;
+                    color: ${colors.primary};
+                    font-size: 14px;
+                }
+
+                #wf-search-toggle {
+                    background: none;
+                    border: none;
+                    color: white;
+                    font-size: 20px;
+                    cursor: pointer;
+                    padding: 0;
+                    width: 24px;
+                    height: 24px;
+                }
+
+                #wf-search-content {
+                    padding: 20px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                    overflow-y: auto;
+                }
+
+                #wf-search-content.collapsed {
+                    display: none;
+                }
+
+                .wf-search-input-group {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
+                .wf-search-label {
+                    font-size: 14px;
+                    font-weight: 500;
+                    color: ${colors.text};
+                }
+
+                .wf-search-input {
+                    padding: 10px 12px;
+                    border: 2px solid ${colors.border};
+                    border-radius: 6px;
+                    font-size: 14px;
+                    transition: border-color 0.2s;
+                }
+
+                .wf-search-input:focus {
+                    outline: none;
+                    border-color: ${colors.primary};
+                }
+
+                .wf-search-button {
+                    padding: 12px;
+                    background: linear-gradient(135deg, ${colors.primary} 0%, ${colors.hover} 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: transform 0.1s;
+                }
+
+                .wf-search-button:hover {
+                    transform: translateY(-1px);
+                }
+
+                .wf-search-button:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                    transform: none;
+                }
+
+                #wf-search-results {
+                    max-height: 400px;
+                    overflow-y: auto;
+                    border: 1px solid ${colors.border};
+                    border-radius: 6px;
+                    padding: 10px;
+                    background: #f9f9f9;
+                }
+
+                .wf-result-item {
+                    padding: 10px;
+                    margin-bottom: 8px;
+                    background: white;
+                    border-radius: 4px;
+                    border-left: 3px solid ${colors.primary};
+                    cursor: pointer;
+                    transition: transform 0.1s;
+                }
+
+                .wf-result-item:hover {
+                    transform: translateX(4px);
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+
+                .wf-result-row {
+                    font-size: 12px;
+                    color: #666;
+                    margin-top: 4px;
+                }
+
+                .wf-result-highlight {
+                    background: ${colors.secondary};
+                    padding: 2px 4px;
+                    border-radius: 2px;
+                    font-weight: bold;
+                }
+
+                .wf-search-stats {
+                    font-size: 12px;
+                    color: #666;
+                    padding: 8px;
+                    background: #f0f0f0;
+                    border-radius: 4px;
+                    text-align: center;
+                }
+
+                .wf-no-results {
+                    text-align: center;
+                    padding: 20px;
+                    color: #999;
+                }
+            </style>
+
+            <div id="wf-search-header">
+                <div id="wf-search-title">
+                    <div id="wf-search-logo">🔍</div>
+                    <span>Full Table Search</span>
+                </div>
+                <button id="wf-search-toggle">−</button>
+            </div>
+
+            <div id="wf-search-content">
+                <button id="wf-api-load-btn" class="wf-search-button" style="background: linear-gradient(135deg, ${colors.accent} 0%, #d66a1a 100%);">
+                    🚀 Load ALL Rows (API)
+                </button>
+
+                <div class="wf-search-input-group">
+                    <label class="wf-search-label">Search Query</label>
+                    <input 
+                        type="text" 
+                        id="wf-search-query" 
+                        class="wf-search-input" 
+                        placeholder="Enter search term..."
+                    />
+                </div>
+
+                <button id="wf-search-btn" class="wf-search-button">
+                    🔍 Search All Rows
+                </button>
+
+                <div class="wf-search-stats" id="wf-search-stats">
+                    <span id="wf-data-source" style="font-weight: bold;">Source: None</span><br>
+                    Rows: <span id="wf-row-count">0</span> | Columns: <span id="wf-col-count">0</span>
+                    <br><small id="wf-stats-hint">Click "Load ALL Rows" to fetch everything</small>
+                </div>
+
+                <div id="wf-search-results" style="display: none;"></div>
+            </div>
+        `;
+
+        document.body.appendChild(container);
+        return container;
+    }
+
+    // Make UI draggable
+    function makeDraggable(element) {
+        const header = element.querySelector('#wf-search-header');
+        let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+
+        header.onmousedown = dragMouseDown;
+
+        function dragMouseDown(e) {
+            e.preventDefault();
+            pos3 = e.clientX;
+            pos4 = e.clientY;
+            document.onmouseup = closeDragElement;
+            document.onmousemove = elementDrag;
+        }
+
+        function elementDrag(e) {
+            e.preventDefault();
+            pos1 = pos3 - e.clientX;
+            pos2 = pos4 - e.clientY;
+            pos3 = e.clientX;
+            pos4 = e.clientY;
+            element.style.top = (element.offsetTop - pos2) + "px";
+            element.style.left = (element.offsetLeft - pos1) + "px";
+            element.style.right = "auto";
+        }
+
+        function closeDragElement() {
+            document.onmouseup = null;
+            document.onmousemove = null;
+        }
+    }
+
+    // Search through all captured data
+    function searchAllData(query) {
+        if (!query || query.trim() === '') {
+            return [];
+        }
+
+        console.log('Searching for:', query);
+        console.log('Searching through', allTableData.length, 'rows');
+
+        const searchTerm = query.toLowerCase();
+        const results = [];
+
+        allTableData.forEach((row, rowIndex) => {
+            let rowMatches = [];
+            
+            // Search through all cells in the row
+            if (row.cells && Array.isArray(row.cells)) {
+                row.cells.forEach((cell, cellIndex) => {
+                    const cellValue = String(cell.value || cell.displayValue || '').toLowerCase();
+                    if (cellValue.includes(searchTerm)) {
+                        rowMatches.push({
+                            column: cell.columnName || columnHeaders[cellIndex]?.title || `Column ${cellIndex}`,
+                            value: cell.value || cell.displayValue,
+                            cellIndex
+                        });
+                    }
+                });
+            }
+
+            if (rowMatches.length > 0) {
+                results.push({
+                    rowIndex: row.rowIndex || rowIndex,
+                    row,
+                    matches: rowMatches
+                });
+            }
+        });
+
+        console.log('Found', results.length, 'matching rows');
+        return results;
+    }
+
+    // Jump to and open a row in the main table view
+    function jumpToRow(rowIndex, searchValue) {
+        const virtualGrid = document.querySelector('.ReactVirtualized__Grid');
+        
+        if (!virtualGrid) {
+            alert('Could not find the table grid. Make sure you are on the table view.');
+            return;
+        }
+
+        // Row height from ReactVirtualized table
+        const rowHeight = 40;
+        const targetScrollTop = rowIndex * rowHeight;
+        
+        console.log(`Scrolling to row ${rowIndex} at position ${targetScrollTop}px`);
+        
+        // Scroll to position
+        virtualGrid.scrollTop = targetScrollTop;
+        
+        // Wait for scroll and rendering, then find and click the row
+        setTimeout(() => {
+            const rows = document.querySelectorAll('.ReactVirtualized__Table__row.data-row');
+            
+            // Find the target row by searching for the value
+            const targetRow = Array.from(rows).find(row => {
+                return row.textContent.includes(searchValue);
+            });
+            
+            if (targetRow) {
+                console.log('Found target row, clicking it:', targetRow);
+                
+                // Highlight the row briefly
+                targetRow.style.transition = 'background-color 0.3s';
+                targetRow.style.backgroundColor = '#86bc25';
+                
+                setTimeout(() => {
+                    targetRow.style.backgroundColor = '';
+                }, 1000);
+                
+                // Click the row to open details
+                const clickEvent = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                });
+                targetRow.dispatchEvent(clickEvent);
+                
+                console.log('Row clicked successfully');
+            } else {
+                console.warn('Target row not found after scroll. Trying alternative method...');
+                
+                // Alternative: try clicking any visible row at that position
+                if (rows.length > 0) {
+                    const middleRow = rows[Math.floor(rows.length / 2)];
+                    middleRow.click();
+                }
+            }
+        }, 500);
+    }
+
+    // Display search results
+    function displayResults(results, query) {
+        const resultsContainer = document.getElementById('wf-search-results');
+        resultsContainer.style.display = 'block';
+        
+        if (results.length === 0) {
+            resultsContainer.innerHTML = '<div class="wf-no-results">No results found</div>';
+            return;
+        }
+
+        const highlightText = (text, query) => {
+            const regex = new RegExp(`(${query})`, 'gi');
+            return String(text).replace(regex, '<span class="wf-result-highlight">$1</span>');
+        };
+
+        resultsContainer.innerHTML = `
+            <div style="padding: 8px; background: ${colors.secondary}; color: white; border-radius: 4px; margin-bottom: 10px; font-weight: bold;">
+                Found ${results.length} matching row${results.length !== 1 ? 's' : ''} - Click any row to jump to it
+            </div>
+        ` + results.map(result => {
+            // Get all cell values for this row to show complete info
+            const allCellsHtml = result.row.cells
+                .filter(cell => cell.value) // Only show cells with values
+                .map(cell =>
+                    `<div class="wf-result-row">
+                        <strong>${cell.columnName}:</strong> ${highlightText(cell.value, query)}
+                    </div>`
+                ).join('');
+
+            return `
+                <div class="wf-result-item" data-row-index="${result.rowIndex}" data-search-value="${query}" style="cursor: pointer;">
+                    <div style="font-weight: 600; color: ${colors.primary}; margin-bottom: 8px;">
+                        📋 Row ${result.rowIndex + 1} <span style="font-size: 11px; color: #666;">- Click to jump</span>
+                    </div>
+                    ${allCellsHtml}
+                </div>
+            `;
+        }).join('');
+
+        // Add click handlers to jump to rows
+        resultsContainer.querySelectorAll('.wf-result-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const rowIndex = parseInt(item.getAttribute('data-row-index'));
+                const searchValue = item.getAttribute('data-search-value');
+                console.log('Jumping to row:', rowIndex);
+                jumpToRow(rowIndex, searchValue);
+            });
+        });
+    }
+
+    // Update stats display
+    function updateStats() {
+        document.getElementById('wf-row-count').textContent = allTableData.length;
+        document.getElementById('wf-col-count').textContent = columnHeaders.length;
+        
+        const sourceEl = document.getElementById('wf-data-source');
+        const hintEl = document.getElementById('wf-stats-hint');
+        
+        if (apiDataLoaded) {
+            sourceEl.textContent = '✅ API (All Data Loaded)';
+            sourceEl.style.color = colors.accent;
+            hintEl.textContent = 'All rows loaded! Ready to search.';
+        } else if (allTableData.length > 0) {
+            sourceEl.textContent = '⚠️ Partial Data';
+            sourceEl.style.color = colors.secondary;
+            hintEl.textContent = 'Click "Load ALL Rows" to get complete data';
+        } else {
+            sourceEl.textContent = '❌ No Data';
+            sourceEl.style.color = '#999';
+            hintEl.textContent = 'Click "Load ALL Rows" to fetch everything';
+        }
+    }
+
+    // Initialize
+    function init() {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+            return;
+        }
+
+        // Only run on dynamicview pages
+        if (!window.location.pathname.includes('/dynamicview/')) {
+            console.log('Smartsheet Full Table Search: Not on a dynamic view page');
+            return;
+        }
+
+        // Install network request interceptor to capture XSRF tokens
+        interceptNetworkRequests();
+
+        // Create UI
+        const ui = createSearchUI();
+        makeDraggable(ui);
+
+        // Setup event listeners
+        const toggleBtn = document.getElementById('wf-search-toggle');
+        const content = document.getElementById('wf-search-content');
+        const apiLoadBtn = document.getElementById('wf-api-load-btn');
+        const searchBtn = document.getElementById('wf-search-btn');
+        const searchInput = document.getElementById('wf-search-query');
+
+        toggleBtn.addEventListener('click', () => {
+            content.classList.toggle('collapsed');
+            toggleBtn.textContent = content.classList.contains('collapsed') ? '+' : '−';
+        });
+
+        // API Load button - fetch ALL rows
+        apiLoadBtn.addEventListener('click', async () => {
+            apiLoadBtn.disabled = true;
+            apiLoadBtn.textContent = '⏳ Loading...';
+            
+            const success = await fetchAllRowsFromAPI();
+            
+            if (success) {
+                updateStats();
+                apiLoadBtn.textContent = '✅ Data Loaded!';
+                apiLoadBtn.style.background = 'linear-gradient(135deg, #40B14B 0%, #2d8a37 100%)';
+                setTimeout(() => {
+                    apiLoadBtn.textContent = '🔄 Reload All Data';
+                    apiLoadBtn.disabled = false;
+                }, 2000);
+            } else {
+                apiLoadBtn.textContent = '❌ Load Failed';
+                apiLoadBtn.disabled = false;
+                alert('Failed to load data from API. Check console (F12) for details.');
+            }
+        });
+
+        // Search button
+        searchBtn.addEventListener('click', () => {
+            const query = searchInput.value.trim();
+            if (!query) {
+                alert('Please enter a search term');
+                return;
+            }
+
+            if (allTableData.length === 0) {
+                alert('No data loaded yet. Click "Load ALL Rows" button first.');
+                return;
+            }
+
+            const results = searchAllData(query);
+            displayResults(results, query);
+        });
+
+        // Enter key to search
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                searchBtn.click();
+            }
+        });
+
+        // Update stats
+        updateStats();
+
+        console.log('Smartsheet Full Table Search initialized');
+        console.log('Click "Load ALL Rows" to fetch all data via API');
+    }
+
+    init();
+})();
