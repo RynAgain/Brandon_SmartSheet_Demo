@@ -467,7 +467,7 @@ const updateChecker = new SimpleUpdateChecker({
 updateChecker.init();
 ```
 
-## Conclusion
+## Conclusions 
 
 The update system in WtsMain.user.js provides a robust, user-friendly approach to version management that can be adapted for various project types. The key strengths of this implementation include:
 

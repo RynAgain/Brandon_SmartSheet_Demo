@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartsheet Full Table Search
 // @namespace    https://github.com/RynAgain/Brandon_SmartSheet_Demo
-// @version      1.2.0
+// @version      1.2.1
 // @description  Search entire Smartsheet table including all virtualized rows via API
 // @author       RynAgain
 // @match        https://app.smartsheet.com/*
@@ -17,7 +17,7 @@
     'use strict';
 
     // Version checking variables
-    const CURRENT_VERSION = '1.2.0';
+    const CURRENT_VERSION = '1.2.1';
     const GITHUB_VERSION_URL = 'https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/table-search.js.user';
     const VERSION_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
