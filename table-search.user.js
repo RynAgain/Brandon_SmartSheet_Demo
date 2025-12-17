@@ -37,7 +37,7 @@
     let apiDataLoaded = false;
     let versionCheckInterval = null;
 
-    // Default XSRF token from example (same as main.js.user)
+    // Default XSRF token from example (same as main.user.js)
     const DEFAULT_XSRF_TOKEN = 'xeFtzoYPp00A72A6D8JsZ0hIJbE';
 
     // Extract view ID from URL
@@ -46,7 +46,7 @@
         return match ? match[1] : null;
     }
 
-    // Get XSRF token with fallback to default and persistence (same logic as main.js.user)
+    // Get XSRF token with fallback to default and persistence (same logic as main.user.js)
     function getXsrfToken() {
         // Check if we have a persisted token
         const persistedToken = GM_getValue('xsrf_token', null);
@@ -107,7 +107,7 @@
         return DEFAULT_XSRF_TOKEN;
     }
 
-    // Intercept fetch requests to capture XSRF tokens (same as main.js.user)
+    // Intercept fetch requests to capture XSRF tokens (same as main.user.js)
     function interceptNetworkRequests() {
         const originalFetch = window.fetch;
         window.fetch = function(...args) {
