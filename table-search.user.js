@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Smartsheet Full Table Search
+// @name         Smartsheet Dynamic View Full Table Search
 // @namespace    https://github.com/RynAgain/Brandon_SmartSheet_Demo
 // @version      1.2.1
 // @description  Search entire Smartsheet table including all virtualized rows via API
