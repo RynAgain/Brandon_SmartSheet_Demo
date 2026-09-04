@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Smartsheet Dynamic View Full Table Search
 // @namespace    https://tamarin.aces.amazon.dev/scripts/smartsheet-dynamic-view-full-table-search
-// @version      1.2.1
+// @version      1.2.2
 // @description  Search entire Smartsheet table including all virtualized rows via API
 // @author       RynAgain
 // @match        https://app.smartsheet.com/*
@@ -17,7 +17,7 @@
     'use strict';
 
     // Version checking variables
-    const CURRENT_VERSION = '1.2.1';
+    const CURRENT_VERSION = '1.2.2';
     const GITHUB_VERSION_URL = 'https://tamarin.aces.amazon.dev/scripts/smartsheet-dynamic-view-full-table-search/install.user.js';
     const VERSION_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
