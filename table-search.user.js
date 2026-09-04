@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Smartsheet Dynamic View Full Table Search
-// @namespace    https://github.com/RynAgain/Brandon_SmartSheet_Demo
+// @namespace    https://tamarin.aces.amazon.dev/scripts/smartsheet-dynamic-view-full-table-search
 // @version      1.2.1
 // @description  Search entire Smartsheet table including all virtualized rows via API
 // @author       RynAgain
 // @match        https://app.smartsheet.com/*
-// @updateURL    https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/table-search.user.js
-// @downloadURL  https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/table-search.user.js
+// @updateURL    https://tamarin.aces.amazon.dev/scripts/smartsheet-dynamic-view-full-table-search/install.user.js
+// @downloadURL  https://tamarin.aces.amazon.dev/scripts/smartsheet-dynamic-view-full-table-search/install.user.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -18,7 +18,7 @@
 
     // Version checking variables
     const CURRENT_VERSION = '1.2.1';
-    const GITHUB_VERSION_URL = 'https://raw.githubusercontent.com/RynAgain/Brandon_SmartSheet_Demo/main/table-search.user.js';
+    const GITHUB_VERSION_URL = 'https://tamarin.aces.amazon.dev/scripts/smartsheet-dynamic-view-full-table-search/install.user.js';
     const VERSION_CHECK_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
     // Whole Foods color palette
